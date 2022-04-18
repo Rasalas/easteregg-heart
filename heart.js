@@ -1,96 +1,73 @@
 class Heart {
     constructor(selector, options = {}) {
-        let defaults = {
+        const defaults = {
             interval: {
                 click: 5000,
                 move: 10000,
                 hold: 5000,
+                cleanup: 250,
             },
             heal: 200,
             logsize: {
                 click: 20,
                 move: 10,
             },
+            reset_rightclick: {
+                duration: 3000,
+            }
         }
         this.options = Object.assign(defaults, options);
-        this.selector = selector;
-        this.heart = document.querySelector(this.selector);
+        this.heart = document.querySelector(selector);
+
         this.emojis = null;
-        this.emoji_pos = 0;
+        this.emoji_pos = parseInt(this.getCookie('heart-game.pos')) || 0;
+
         this._addStyles();
+        this._addEventListeners();
         this.heart.classList.add('noselect');
-        this.eventlog = [];
-        this.longclick = [];
-        this.longclick.interval = null;
-        this.longrightclick = [];
-        this.longrightclick.interval = null;
-        this.eventlog.click = [];
-        this.eventlog.move = [];
-        this.cleaningInterval = setInterval(() => { this.cleanLog() }, 250);
 
+        this.eventlog = {
+            click: [],
+            move: [],
+        };
 
-        this.heart.addEventListener('click', () => { this.click(this) })
-        this.heart.addEventListener('contextmenu', (event) => { this.contextmenu(this, event) })
-
-        this.heart.addEventListener('mousemove', (event) => { this.move(this, event) })
-        this.heart.addEventListener('mousedown', (event) => { this.hold(this, event) })
-        this.heart.addEventListener('mouseup', () => {
-            clearInterval(this.longclick.interval);
-            clearInterval(this.longrightclick.interval);
-        })
-        this.heart.addEventListener('mouseleave', () => {
-            clearInterval(this.longclick.interval)
-            clearInterval(this.longrightclick.interval)
-        })
+        this.interval = {
+            longclick: {
+                left: null,
+                right: null,
+            },
+            cleanup: setInterval(() => { this.cleanLog() }, this.options.interval.cleanup),
+        }
 
         if (this.getCookie('heart-game.beaten') == 'true') {
             this.generateEmojis();
-            this.setEmoji(this.emojis[this.getCookie('heart-game.pos')] || this.emojis[0]);
-        } 
 
+            this.setEmoji(this.emojis[this.emoji_pos]);
+
+            this.refreshCookies();
+            this.won();
+        }
     }
 
     click_route() {
-        if (this.getClicks() >= 70 || this.getCookie('heart-game.beaten') == 'true') {
-            this.won();
-            return;
-        }
         switch (this.getEmoji()) {
             case '❤️':
-                this.toggleBeat();
+                this.toggleHeartBeat();
                 if (this.getClicks() >= 5) this.setEmoji('💔')
                 break;
             case '💔':
                 if (this.getClicks() >= 20) this.setEmoji('🔥')
                 break;
             case '💎':
-                if (this.getClicks() >= 65) this.setEmoji('✨')
+                if (this.getClicks() >= 60) this.setEmoji('✨')
                 break;
             case '✨':
-                if (this.getClicks() >= 70) this.setEmoji('🎉')
-                break;
-            case '🎉':
-            default:
-                this.won()
+                if (this.getClicks() >= 70) {
+                    this.setEmoji('🎉')
+                    this.won()
+                }
                 break;
         }
-    }
-
-    won() {
-        if (this.getClicks() >= 70 || this.getCookie('heart-game.beaten') == 'true') {
-            if (this.emojis == null) {
-                this.generateEmojis();
-                this.setEmoji(this.emojis[this.getCookie('heart-game.pos')] || this.emojis[0]);
-                this.end();
-            }
-            console.log('pos:'+this.emoji_pos)
-            this.nextEmoji();
-            this.setCookie('heart-game.beaten', 'true', 30);
-            this.setCookie('heart-game.pos', this.emoji_pos, 30);
-            clearInterval(this.longclick.interval);
-                clearInterval(this.cleaningInterval);
-        }
-
     }
 
     move_route() {
@@ -100,12 +77,14 @@ class Heart {
                     this.setEmoji('❤️');
                     this.beat();
                     this.reset_movelog();
+                    this.reset_clicklog();
                 }
                 break;
             case '🔥':
                 if (this.getTotalDistance() >= this.options.heal) {
                     this.setEmoji('🖤');
                     this.reset_movelog();
+                    this.reset_clicklog();
                 }
                 break;
         }
@@ -114,23 +93,92 @@ class Heart {
     hold_route() {
         switch (this.getEmoji()) {
             case '🖤':
-                console.log('dope')
+
                 this.setEmoji('💎');
                 this.end()
                 break;
         }
-        console.log('end of hold_route')
     }
 
-    // cleanup
+    click(ctx) {
+        console.log(this.interval, this.eventlog)
+        ctx.push_log('click', { time: Date.now() });
+        ctx.click_route();
+
+        if (this.isGameBeaten()) {
+            this.nextEmoji();
+        }
+    }
+
+    contextmenu(ctx, event) {
+        event.preventDefault();
+
+        if (this.isGameBeaten()) {
+            ctx.lastEmoji();
+
+        }
+    }
+
+    move(ctx, event) {
+        const emoji = ctx.getEmoji()
+        const healable = ['💔', '🔥'];
+
+        if (healable.includes(emoji)) {
+            ctx.push_log('move', { time: Date.now(), x: event.clientX, y: event.clientY, distance: this.getDistanceToLast(event.clientX, event.clientY) });
+            ctx.move_route();
+        }
+    }
+
+    hold(ctx, event) {
+        const emoji = ctx.getEmoji()
+        const compressable = ['🖤'];
+
+        if (compressable.includes(emoji)) {
+            ctx.interval.longclick.left = setInterval(function () {
+                ctx.hold_route();
+            }, 5000);
+        }
+
+        if (event.which == 3) {
+            ctx.interval.longclick.right = setInterval(function () {
+                if (confirm('Durch Bestätigung dieses Fensters wird dein Spielfortschritt gelöscht - bist du dir sicher?')) {
+                    ctx.deleteCookies();
+                    ctx.setEmoji('❤️');
+                    ctx.beat();
+                }
+            }, this.options.reset_rightclick.duration);
+        }
+    }
+
+    won() {
+        if (this.isGameBeaten()) {
+            if (this.emojis == null) {
+                this.generateEmojis();
+                this.setEmoji(this.emojis[this.getCookie('heart-game.pos')] || this.emojis[0]);
+                this.end();
+            }
+            this.setCookie('heart-game.beaten', 'true', 30);
+
+            clearInterval(this.interval.longclick.left);
+            clearInterval(this.interval.cleanup);
+        }
+    }
+
+    isGameBeaten() {
+        return this.getCookie('heart-game.beaten') == 'true' || this.getClicks() >= 70;
+    }
+
     end() {
-        clearInterval(this.longclick.interval);
-        clearInterval(this.cleaningInterval);
+        clearInterval(this.interval.longclick.left);
+        clearInterval(this.interval.cleanup);
         this.reset_movelog();
     }
 
     reset_movelog() {
         this.eventlog.move = [];
+    }
+    reset_clicklog() {
+        this.eventlog.click = [];
     }
 
     async cleanLog() {
@@ -142,28 +190,10 @@ class Heart {
         this.eventlog[event].push(data);
     }
 
-    click(ctx) {
-        ctx.push_log('click', { time: Date.now() });
-        ctx.click_route();
-    }
-
-    contextmenu(ctx, event) {
-        event.preventDefault();
-
-        if (this.getClicks() >= 70 || this.getCookie('heart-game.beaten') == 'true') {
-            ctx.lastEmoji();
-            this.setCookie('heart-game.beaten', 'true', 30);
-            this.setCookie('heart-game.pos', this.emoji_pos, 30);
-            console.log('pos:'+this.emoji_pos)
-        }
-
-    }
-
-
     getClickFrequency(samplesize = false) {
         let clicks = this.eventlog.click.length;
         let from_key = (samplesize ? (clicks - samplesize - 1) : 0);
-        console.log(from_key);
+
         let to_key = clicks - 1
         let count = samplesize || clicks;
 
@@ -176,36 +206,6 @@ class Heart {
 
     getClicks() {
         return this.eventlog.click.length;
-    }
-
-    move(ctx, event) {
-        const emoji = ctx.getEmoji()
-        const healable = ['💔', '🔥'];
-
-        if (healable.includes(emoji)) {
-            console.log('move');
-            ctx.push_log('move', { time: Date.now(), x: event.clientX, y: event.clientY, distance: this.getDistanceToLast(event.clientX, event.clientY) });
-            console.log(this.getTotalDistance());
-            ctx.move_route();
-        }
-    }
-
-    hold(ctx, event) {
-        console.log('holding')
-        ctx.longclick.interval = setInterval(function () {
-            console.log('done - hold route')
-            ctx.hold_route();
-        }, 5000);
-        if (event.which == 3) {
-            ctx.longrightclick.interval = setInterval(function () {
-                if (confirm('Durch Bestätigung dieses Fensters wird dein Spielfortschritt gelöscht - bist du dir sicher?')) {
-                    ctx.setCookie('heart-game.beaten', 'false', -30);
-                    ctx.setCookie('heart-game.pos', 0, -30);
-                    ctx.setEmoji('❤️');
-                    ctx.beat();
-                }
-            }, 3000);
-        }
     }
 
     getDistanceToLast(x, y) {
@@ -224,26 +224,32 @@ class Heart {
         return distance;
     }
 
-    beat() {
-        this.heart.classList.toggle('heartbeat', true);
+    beat(on = true) {
+        this.heart.classList.toggle('heartbeat', on);
     }
 
-    toggleBeat() {
+    flicker(on = true) {
+        this.heart.classList.toggle('fire', on);
+    }
+
+    toggleHeartBeat() {
         this.heart.classList.toggle('heartbeat');
     }
 
-    setEmoji(emoji) {
-        this.heart.classList.remove('heartbeat');
-        this.heart.classList.remove('fire');
-
-        this.heart.innerHTML = emoji;
-
-        switch (emoji) {
+    animate() {
+        switch (this.getEmoji()) {
             case '🔥':
-                this.heart.classList.add('fire');
+                this.flicker();
                 break;
+            default:
+                this.beat(false);
+                this.flicker(false);
         }
+    }
 
+    setEmoji(emoji) {
+        this.heart.innerHTML = emoji;
+        this.animate();
     }
 
     getEmoji() {
@@ -271,33 +277,27 @@ class Heart {
     nextEmoji() {
 
         let index = this.emoji_pos || (this.emojis.indexOf(`&#${this.getEmoji().codePointAt(0)};`));
-        
-        this.emoji_pos = (index + 1) % this.emojis.length;
-        this.setCookie('heart-game.pos', this.emoji_pos, this.emoji_pos);
 
-        if (index >= 0 && index < this.emojis.length - 2) {
-            this.setEmoji(this.emojis[this.emoji_pos]);
-            console.log(`next emoji ${this.emojis[this.emoji_pos]}`)
-        } else {
-            this.setEmoji(this.emojis[0]);
-            console.log(`first emoji ${this.emojis[0]}`)
-        }
+        this.emoji_pos = (index + 1) % this.emojis.length;
+        this.setCookie('heart-game.pos', this.emoji_pos, 30);
+
+        this.setEmoji(this.emojis[this.emoji_pos]);
+
     }
 
     lastEmoji() {
-        let index = this.emojis.indexOf(`&#${this.getEmoji().codePointAt(0)};`);
-        this.emoji_pos = (index - 1) % this.emojis.length;
 
-        if (index > 1) {
-            this.setEmoji(this.emojis[index - 1]);
-        } else {
-            this.setEmoji(this.emojis[this.emojis.length - 1]);
-        }
+        let index = this.emoji_pos || (this.emojis.indexOf(`&#${this.getEmoji().codePointAt(0)};`));
+        this.emoji_pos = (index - 1) < 0 ? this.emojis.length - 1 : (index - 1);
+        this.setCookie('heart-game.pos', this.emoji_pos, 30);
+
+
+        this.setEmoji(this.emojis[this.emoji_pos]);
     }
 
     reset() {
-        this.heart.classList.remove('heartbeat');
-        this.heart.classList.remove('fire');
+        this.beat(false);
+        this.flicker(false);
         this.setEmoji('❤️');
     }
 
@@ -354,6 +354,32 @@ class Heart {
                 animation-timing-function: steps(1);
             }`
         document.head.appendChild(style)
+    }
+
+    _addEventListeners() {
+        this.heart.addEventListener('click', () => { this.click(this) })
+        this.heart.addEventListener('contextmenu', (event) => { this.contextmenu(this, event) })
+
+        this.heart.addEventListener('mousemove', (event) => { this.move(this, event) })
+        this.heart.addEventListener('mousedown', (event) => { this.hold(this, event) })
+        this.heart.addEventListener('mouseup', () => {
+            clearInterval(this.interval.longclick.left);
+            clearInterval(this.interval.longclick.right);
+        })
+        this.heart.addEventListener('mouseleave', () => {
+            clearInterval(this.interval.longclick.left)
+            clearInterval(this.interval.longclick.right)
+        })
+    }
+
+    refreshCookies() {
+        this.setCookie('heart-game.beaten', 'true', 30);
+        this.setCookie('heart-game.pos', this.emoji_pos, 30);
+    }
+
+    deleteCookies() {
+        this.setCookie('heart-game.beaten', 'false', -1);
+        this.setCookie('heart-game.pos', 0, -1);
     }
 
     setCookie(cname, cvalue, exdays) {
