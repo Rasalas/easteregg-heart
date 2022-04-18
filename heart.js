@@ -51,6 +51,10 @@ class Heart {
     }
 
     click_route() {
+        if (this.getClicks() >= 70 || this.getCookie('heart-game.beaten') == 'true') {
+            this.won();
+            return;
+        }
         switch (this.getEmoji()) {
             case '❤️':
                 this.toggleBeat();
@@ -60,10 +64,10 @@ class Heart {
                 if (this.getClicks() >= 20) this.setEmoji('🔥')
                 break;
             case '💎':
-                if (this.getClicks() >= 100) this.setEmoji('✨')
+                if (this.getClicks() >= 65) this.setEmoji('✨')
                 break;
             case '✨':
-                if (this.getClicks() >= 111) this.setEmoji('🎉')
+                if (this.getClicks() >= 70) this.setEmoji('🎉')
                 break;
             case '🎉':
             default:
@@ -79,10 +83,14 @@ class Heart {
                 this.setEmoji(this.emojis[this.getCookie('heart-game.pos')] || this.emojis[0]);
                 this.end();
             }
+            console.log('pos:'+this.emoji_pos)
             this.nextEmoji();
             this.setCookie('heart-game.beaten', 'true', 30);
             this.setCookie('heart-game.pos', this.emoji_pos, 30);
+            clearInterval(this.longclick.interval);
+                clearInterval(this.cleaningInterval);
         }
+
     }
 
     move_route() {
@@ -146,6 +154,7 @@ class Heart {
             ctx.lastEmoji();
             this.setCookie('heart-game.beaten', 'true', 30);
             this.setCookie('heart-game.pos', this.emoji_pos, 30);
+            console.log('pos:'+this.emoji_pos)
         }
 
     }
@@ -261,12 +270,14 @@ class Heart {
 
     nextEmoji() {
 
-        let index = this.emojis.indexOf(`&#${this.getEmoji().codePointAt(0)};`);
+        let index = this.emoji_pos || (this.emojis.indexOf(`&#${this.getEmoji().codePointAt(0)};`));
+        
         this.emoji_pos = (index + 1) % this.emojis.length;
+        this.setCookie('heart-game.pos', this.emoji_pos, this.emoji_pos);
 
         if (index >= 0 && index < this.emojis.length - 2) {
-            this.setEmoji(this.emojis[index + 1]);
-            console.log(`next emoji ${this.emojis[index + 1]}`)
+            this.setEmoji(this.emojis[this.emoji_pos]);
+            console.log(`next emoji ${this.emojis[this.emoji_pos]}`)
         } else {
             this.setEmoji(this.emojis[0]);
             console.log(`first emoji ${this.emojis[0]}`)
